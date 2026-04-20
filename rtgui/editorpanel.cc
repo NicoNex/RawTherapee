@@ -3018,110 +3018,160 @@ void EditorPanel::saveLUTPressed ()
     auto& opts = App::get().mut_options();
 
     Gtk::Dialog dialog(M("MAIN_BUTTON_SAVE_LUT_DIALOG_TITLE"), *toplevel);
+    // Match the natural size of SaveAsDialog
+    dialog.set_default_size(900, 650);
 
-    // --- Format selection row ---
-    Gtk::RadioButton* haldRadio = Gtk::manage(
-        new Gtk::RadioButton(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD")));
-    Gtk::RadioButton* cubeRadio = Gtk::manage(
-        new Gtk::RadioButton(M("MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE")));
-    cubeRadio->join_group(*haldRadio);
-
-    // --- Hald level selector (only active when Hald CLUT is chosen) ---
-    Gtk::Label* haldLevelLabel = Gtk::manage(
-        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_HALD_LEVEL") + ":"));
-    Gtk::ComboBoxText* haldLevelCombo = Gtk::manage(new Gtk::ComboBoxText());
-    for (int lvl : {8, 10, 12, 14, 16}) {
-        haldLevelCombo->append(std::to_string(lvl));
-    }
-    haldLevelCombo->set_active(2); // default: 12
-
-    // --- Cube size selector (only active when Cube LUT is chosen) ---
-    Gtk::Label* cubeSizeLabel = Gtk::manage(
-        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_CUBE_SIZE") + ":"));
-    Gtk::ComboBoxText* cubeSizeCombo = Gtk::manage(new Gtk::ComboBoxText());
-    cubeSizeCombo->append("17");
-    cubeSizeCombo->append("33");
-    cubeSizeCombo->append("65");
-    cubeSizeCombo->set_active(1); // default: 33
-    cubeSizeCombo->set_sensitive(false);
-    cubeSizeLabel->set_sensitive(false);
-
-    Gtk::Box* formatBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-    formatBox->pack_start(*haldRadio,      Gtk::PACK_SHRINK);
-    formatBox->pack_start(*haldLevelLabel, Gtk::PACK_SHRINK);
-    formatBox->pack_start(*haldLevelCombo, Gtk::PACK_SHRINK);
-    formatBox->pack_start(*cubeRadio,      Gtk::PACK_SHRINK);
-    formatBox->pack_start(*cubeSizeLabel,  Gtk::PACK_SHRINK);
-    formatBox->pack_start(*cubeSizeCombo,  Gtk::PACK_SHRINK);
-
-    // --- File chooser ---
+    // ── File chooser (top, expands) ──────────────────────────────────────────
     Gtk::FileChooserWidget* fchooser = Gtk::manage(
         new Gtk::FileChooserWidget(Gtk::FILE_CHOOSER_ACTION_SAVE));
     if (Glib::file_test(opts.lastSaveAsPath, Glib::FILE_TEST_IS_DIR)) {
         fchooser->set_current_folder(opts.lastSaveAsPath);
     }
+    fchooser->set_current_name(lastSaveAsFileName + "_lut.png");
 
     auto filter_png = Gtk::FileFilter::create();
     filter_png->set_name(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD"));
     filter_png->add_pattern("*.png");
     filter_png->add_pattern("*.PNG");
+    filter_png->add_pattern("*.tif");
+    filter_png->add_pattern("*.TIF");
+    filter_png->add_pattern("*.tiff");
+    filter_png->add_pattern("*.TIFF");
 
     auto filter_cube = Gtk::FileFilter::create();
     filter_cube->set_name(M("MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE"));
     filter_cube->add_pattern("*.cube");
     filter_cube->add_pattern("*.CUBE");
 
-    fchooser->add_filter(filter_png);
-    fchooser->add_filter(filter_cube);
-    fchooser->set_filter(filter_png);
-    fchooser->set_current_name("lut.png");
-
     fchooser->signal_file_activated().connect([&dialog]() {
         dialog.response(Gtk::RESPONSE_OK);
     });
 
-    // When format changes, update filter, filename extension and option controls.
+    // ── Bottom-left: LUT format panel (mirrors SaveFormatPanel structure) ──────
+    //
+    // Row 0: "Format:" label + combo (always visible)
+    // Row 1: Hald level options       (shown only when Hald CLUT selected)
+    // Row 2: Cube size options        (shown only when Cube LUT selected)
+    //
+    // show_all() / hide() on each row, exactly as SaveFormatPanel::formatChanged().
+
+    Gtk::Grid* formatGrid = Gtk::manage(new Gtk::Grid());
+    formatGrid->set_column_spacing(5);
+    formatGrid->set_row_spacing(5);
+    setExpandAlignProperties(formatGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
+
+    // Row 0 — format combo
+    Gtk::Label* formatLabel = Gtk::manage(
+        new Gtk::Label(M("SAVEDLG_FILEFORMAT") + ":"));
+    setExpandAlignProperties(formatLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    Gtk::ComboBoxText* formatCombo = Gtk::manage(new Gtk::ComboBoxText());
+    setExpandAlignProperties(formatCombo, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    formatCombo->append(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD")); // index 0
+    formatCombo->append(M("MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE")); // index 1
+
+    formatGrid->attach(*formatLabel, 0, 0, 1, 1);
+    formatGrid->attach(*formatCombo, 1, 0, 1, 1);
+
+    // Row 1 — Hald level options
+    Gtk::Label* haldLevelLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_HALD_LEVEL") + ":"));
+    setExpandAlignProperties(haldLevelLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    Gtk::ComboBoxText* haldLevelCombo = Gtk::manage(new Gtk::ComboBoxText());
+    setExpandAlignProperties(haldLevelCombo, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    for (int lvl : {8, 10, 12, 14, 16}) {
+        haldLevelCombo->append(std::to_string(lvl));
+    }
+    haldLevelCombo->set_active(2); // default: 12
+
+    Gtk::Grid* haldOpts = Gtk::manage(new Gtk::Grid());
+    haldOpts->set_column_spacing(5);
+    haldOpts->attach(*haldLevelLabel, 0, 0, 1, 1);
+    haldOpts->attach(*haldLevelCombo, 1, 0, 1, 1);
+    haldOpts->show_all();
+    formatGrid->attach(*haldOpts, 0, 1, 2, 1);
+
+    // Row 2 — Cube size options
+    Gtk::Label* cubeSizeLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_CUBE_SIZE") + ":"));
+    setExpandAlignProperties(cubeSizeLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    Gtk::ComboBoxText* cubeSizeCombo = Gtk::manage(new Gtk::ComboBoxText());
+    setExpandAlignProperties(cubeSizeCombo, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    cubeSizeCombo->append("17");
+    cubeSizeCombo->append("33");
+    cubeSizeCombo->append("65");
+    cubeSizeCombo->set_active(1); // default: 33
+
+    Gtk::Grid* cubeOpts = Gtk::manage(new Gtk::Grid());
+    cubeOpts->set_column_spacing(5);
+    cubeOpts->attach(*cubeSizeLabel, 0, 0, 1, 1);
+    cubeOpts->attach(*cubeSizeCombo, 1, 0, 1, 1);
+    formatGrid->attach(*cubeOpts, 0, 2, 2, 1);
+
+    // ── Bottom-right: general options ────────────────────────────────────────
+    Gtk::CheckButton* toneCurveCb = Gtk::manage(
+        new Gtk::CheckButton(M("MAIN_BUTTON_SAVE_LUT_INCLUDE_TONECURVE")));
+    toneCurveCb->set_active(false);
+
+    Gtk::Box* vbox_right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    vbox_right->pack_start(*toneCurveCb, Gtk::PACK_SHRINK);
+
+    // ── Assemble bottom bar (mirrors SaveAsDialog layout) ────────────────────
+    Gtk::Box* hbox_bottom = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    hbox_bottom->pack_start(*formatGrid,
+        Gtk::PACK_EXPAND_WIDGET, 2);
+    hbox_bottom->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)),
+        Gtk::PACK_SHRINK, 2);
+    hbox_bottom->pack_start(*vbox_right,
+        Gtk::PACK_EXPAND_WIDGET, 2);
+
+    // ── Format-change handler — show/hide like SaveFormatPanel::formatChanged()
     auto onFormatChanged = [&]() {
-        const bool isCube = cubeRadio->get_active();
-        haldLevelLabel->set_sensitive(!isCube);
-        haldLevelCombo->set_sensitive(!isCube);
-        cubeSizeLabel->set_sensitive(isCube);
-        cubeSizeCombo->set_sensitive(isCube);
+        const bool isCube = formatCombo->get_active_row_number() == 1;
+
+        if (isCube) {
+            haldOpts->hide();
+            cubeOpts->show_all();
+        } else {
+            haldOpts->show_all();
+            cubeOpts->hide();
+        }
+
         fchooser->set_filter(isCube ? filter_cube : filter_png);
 
         Glib::ustring name = fchooser->get_current_name();
         const auto dotPos = name.rfind('.');
         if (dotPos != Glib::ustring::npos) {
-            name = name.substr(0, dotPos) + (isCube ? ".cube" : ".png");
-            fchooser->set_current_name(name);
+            fchooser->set_current_name(
+                name.substr(0, dotPos) + (isCube ? ".cube" : ".png"));
         }
     };
-    haldRadio->signal_toggled().connect([&]() { if (haldRadio->get_active()) onFormatChanged(); });
-    cubeRadio->signal_toggled().connect([&]() { if (cubeRadio->get_active()) onFormatChanged(); });
 
-    // --- Tone curve checkbox ---
-    Gtk::CheckButton* toneCurveCb = Gtk::manage(
-        new Gtk::CheckButton(M("MAIN_BUTTON_SAVE_LUT_INCLUDE_TONECURVE")));
-    toneCurveCb->set_active(false);
+    formatCombo->signal_changed().connect(onFormatChanged);
 
-    // --- Buttons ---
+    // ── Buttons ───────────────────────────────────────────────────────────────
     Gtk::Button* ok     = Gtk::manage(new Gtk::Button(M("GENERAL_OK")));
     Gtk::Button* cancel = Gtk::manage(new Gtk::Button(M("GENERAL_CANCEL")));
     ok->signal_clicked().connect([&dialog]()     { dialog.response(Gtk::RESPONSE_OK); });
     cancel->signal_clicked().connect([&dialog]() { dialog.response(Gtk::RESPONSE_CANCEL); });
 
-    dialog.get_content_area()->pack_start(*formatBox,   Gtk::PACK_SHRINK, 4);
-    dialog.get_content_area()->pack_start(*fchooser);
-    dialog.get_content_area()->pack_start(*toneCurveCb, Gtk::PACK_SHRINK, 4);
+    dialog.get_content_area()->pack_start(*fchooser,    Gtk::PACK_EXPAND_WIDGET);
+    dialog.get_content_area()->pack_start(*hbox_bottom, Gtk::PACK_SHRINK, 2);
     dialog.get_action_area()->pack_end(*ok,     Gtk::PACK_SHRINK, 4);
     dialog.get_action_area()->pack_end(*cancel, Gtk::PACK_SHRINK, 4);
     dialog.show_all_children();
+    // Trigger the format signal after show_all_children() so that
+    // onFormatChanged() can properly show/hide format-specific options.
+    // This mirrors the SaveAsDialog pattern: formatOpts->init() after show_all_children().
+    formatCombo->set_active(0);
 
     if (dialog.run() != Gtk::RESPONSE_OK) {
         return;
     }
 
-    const bool isCube = cubeRadio->get_active();
+    const bool isCube = formatCombo->get_active_row_number() == 1;
 
     Glib::ustring destPath = fchooser->get_filename();
     if (destPath.empty()) {
