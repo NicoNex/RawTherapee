@@ -3027,7 +3027,7 @@ void EditorPanel::saveLUTPressed ()
     if (Glib::file_test(opts.lastSaveAsPath, Glib::FILE_TEST_IS_DIR)) {
         fchooser->set_current_folder(opts.lastSaveAsPath);
     }
-    fchooser->set_current_name(lastSaveAsFileName + "_lut.png");
+    fchooser->set_current_name(lastSaveAsFileName + "_lut");
 
     auto filter_png = Gtk::FileFilter::create();
     filter_png->set_name(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD"));
@@ -3141,12 +3141,9 @@ void EditorPanel::saveLUTPressed ()
 
         fchooser->set_filter(isCube ? filter_cube : filter_png);
 
-        Glib::ustring name = fchooser->get_current_name();
-        const auto dotPos = name.rfind('.');
-        if (dotPos != Glib::ustring::npos) {
-            fchooser->set_current_name(
-                name.substr(0, dotPos) + (isCube ? ".cube" : ".png"));
-        }
+        const Glib::ustring name = fchooser->get_current_name();
+        fchooser->set_current_name(
+            removeExtension(Glib::path_get_basename(name)) + (isCube ? ".cube" : ".png"));
     };
 
     formatCombo->signal_changed().connect(onFormatChanged);
@@ -3185,7 +3182,7 @@ void EditorPanel::saveLUTPressed ()
         if (isCube) {
             if (ext != "cube") { destPath += ".cube"; }
         } else {
-            if (ext != "png")  { destPath += ".png"; }
+            if (ext != "png" && ext != "tif" && ext != "tiff") { destPath += ".png"; }
         }
     }
 
