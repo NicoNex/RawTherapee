@@ -7,6 +7,7 @@
 
 #include "cache.h"
 #include "alignedbuffer.h"
+#include "iimage.h"
 #include "noncopyable.h"
 
 namespace rtengine
@@ -86,6 +87,16 @@ class CubeLUT final :
 {
 public:
     bool load(const Glib::ustring& filename) override;
+
+    // Generate a (size*size) × size identity PNG for a cube of the given size.
+    // Pixel at (y=b, x=g*size+r) encodes input colour (r, g, b) / (size-1).
+    // Returns the temp file path, or an empty string on failure.
+    static Glib::ustring createIdentityTempFile(int size);
+
+    // Write a .cube text file from a processed identity image created by
+    // createIdentityTempFile().  The same size must be passed to both calls.
+    static bool saveAsCubeFile(const IImagefloat* img, int size,
+                               const Glib::ustring& destPath);
 };
 
 class CLUTStore final :

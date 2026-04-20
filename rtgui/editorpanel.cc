@@ -3015,38 +3015,102 @@ void EditorPanel::saveLUTPressed ()
     }
 
     auto* toplevel = static_cast<Gtk::Window*>(get_toplevel());
+    auto& opts = App::get().mut_options();
 
-    // Build the dialog using the same pattern as SaveAsDialog.
     Gtk::Dialog dialog(M("MAIN_BUTTON_SAVE_LUT_DIALOG_TITLE"), *toplevel);
 
+    // --- Format selection row ---
+    Gtk::RadioButton* haldRadio = Gtk::manage(
+        new Gtk::RadioButton(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD")));
+    Gtk::RadioButton* cubeRadio = Gtk::manage(
+        new Gtk::RadioButton(M("MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE")));
+    cubeRadio->join_group(*haldRadio);
+
+    // --- Hald level selector (only active when Hald CLUT is chosen) ---
+    Gtk::Label* haldLevelLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_HALD_LEVEL") + ":"));
+    Gtk::ComboBoxText* haldLevelCombo = Gtk::manage(new Gtk::ComboBoxText());
+    for (int lvl : {8, 10, 12, 14, 16}) {
+        haldLevelCombo->append(std::to_string(lvl));
+    }
+    haldLevelCombo->set_active(2); // default: 12
+
+    // --- Cube size selector (only active when Cube LUT is chosen) ---
+    Gtk::Label* cubeSizeLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_CUBE_SIZE") + ":"));
+    Gtk::ComboBoxText* cubeSizeCombo = Gtk::manage(new Gtk::ComboBoxText());
+    cubeSizeCombo->append("17");
+    cubeSizeCombo->append("33");
+    cubeSizeCombo->append("65");
+    cubeSizeCombo->set_active(1); // default: 33
+    cubeSizeCombo->set_sensitive(false);
+    cubeSizeLabel->set_sensitive(false);
+
+    Gtk::Box* formatBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    formatBox->pack_start(*haldRadio,      Gtk::PACK_SHRINK);
+    formatBox->pack_start(*haldLevelLabel, Gtk::PACK_SHRINK);
+    formatBox->pack_start(*haldLevelCombo, Gtk::PACK_SHRINK);
+    formatBox->pack_start(*cubeRadio,      Gtk::PACK_SHRINK);
+    formatBox->pack_start(*cubeSizeLabel,  Gtk::PACK_SHRINK);
+    formatBox->pack_start(*cubeSizeCombo,  Gtk::PACK_SHRINK);
+
+    // --- File chooser ---
     Gtk::FileChooserWidget* fchooser = Gtk::manage(
         new Gtk::FileChooserWidget(Gtk::FILE_CHOOSER_ACTION_SAVE));
-
-    auto& opts = App::get().mut_options();
     if (Glib::file_test(opts.lastSaveAsPath, Glib::FILE_TEST_IS_DIR)) {
         fchooser->set_current_folder(opts.lastSaveAsPath);
     }
-    fchooser->set_current_name("lut.png");
 
     auto filter_png = Gtk::FileFilter::create();
-    filter_png->set_name("PNG");
+    filter_png->set_name(M("MAIN_BUTTON_SAVE_LUT_FORMAT_HALD"));
     filter_png->add_pattern("*.png");
     filter_png->add_pattern("*.PNG");
+
+    auto filter_cube = Gtk::FileFilter::create();
+    filter_cube->set_name(M("MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE"));
+    filter_cube->add_pattern("*.cube");
+    filter_cube->add_pattern("*.CUBE");
+
+    fchooser->add_filter(filter_png);
+    fchooser->add_filter(filter_cube);
     fchooser->set_filter(filter_png);
+    fchooser->set_current_name("lut.png");
 
     fchooser->signal_file_activated().connect([&dialog]() {
         dialog.response(Gtk::RESPONSE_OK);
     });
 
+    // When format changes, update filter, filename extension and option controls.
+    auto onFormatChanged = [&]() {
+        const bool isCube = cubeRadio->get_active();
+        haldLevelLabel->set_sensitive(!isCube);
+        haldLevelCombo->set_sensitive(!isCube);
+        cubeSizeLabel->set_sensitive(isCube);
+        cubeSizeCombo->set_sensitive(isCube);
+        fchooser->set_filter(isCube ? filter_cube : filter_png);
+
+        Glib::ustring name = fchooser->get_current_name();
+        const auto dotPos = name.rfind('.');
+        if (dotPos != Glib::ustring::npos) {
+            name = name.substr(0, dotPos) + (isCube ? ".cube" : ".png");
+            fchooser->set_current_name(name);
+        }
+    };
+    haldRadio->signal_toggled().connect([&]() { if (haldRadio->get_active()) onFormatChanged(); });
+    cubeRadio->signal_toggled().connect([&]() { if (cubeRadio->get_active()) onFormatChanged(); });
+
+    // --- Tone curve checkbox ---
     Gtk::CheckButton* toneCurveCb = Gtk::manage(
         new Gtk::CheckButton(M("MAIN_BUTTON_SAVE_LUT_INCLUDE_TONECURVE")));
     toneCurveCb->set_active(false);
 
+    // --- Buttons ---
     Gtk::Button* ok     = Gtk::manage(new Gtk::Button(M("GENERAL_OK")));
     Gtk::Button* cancel = Gtk::manage(new Gtk::Button(M("GENERAL_CANCEL")));
     ok->signal_clicked().connect([&dialog]()     { dialog.response(Gtk::RESPONSE_OK); });
     cancel->signal_clicked().connect([&dialog]() { dialog.response(Gtk::RESPONSE_CANCEL); });
 
+    dialog.get_content_area()->pack_start(*formatBox,   Gtk::PACK_SHRINK, 4);
     dialog.get_content_area()->pack_start(*fchooser);
     dialog.get_content_area()->pack_start(*toneCurveCb, Gtk::PACK_SHRINK, 4);
     dialog.get_action_area()->pack_end(*ok,     Gtk::PACK_SHRINK, 4);
@@ -3057,20 +3121,27 @@ void EditorPanel::saveLUTPressed ()
         return;
     }
 
+    const bool isCube = cubeRadio->get_active();
+
     Glib::ustring destPath = fchooser->get_filename();
     if (destPath.empty()) {
         destPath = Glib::build_filename(
             fchooser->get_current_folder(), fchooser->get_current_name());
     }
 
-    // Append .png if the user omitted it.
-    if (rtengine::getFileExtension(destPath).lowercase() != "png") {
-        destPath += ".png";
+    // Ensure the correct extension is present.
+    {
+        const Glib::ustring ext = rtengine::getFileExtension(destPath).lowercase();
+        if (isCube) {
+            if (ext != "cube") { destPath += ".cube"; }
+        } else {
+            if (ext != "png")  { destPath += ".png"; }
+        }
     }
 
     opts.lastSaveAsPath = Glib::path_get_dirname(destPath);
 
-    // Ask before overwriting an existing file.
+    // Confirm overwrite.
     if (Glib::file_test(destPath, Glib::FILE_TEST_EXISTS)) {
         Gtk::MessageDialog confirm(*toplevel,
             escapeHtmlChars(destPath) + "\n" + M("MAIN_MSG_ALREADYEXISTS") + " " + M("MAIN_MSG_QOVERWRITE"),
@@ -3080,11 +3151,19 @@ void EditorPanel::saveLUTPressed ()
         }
     }
 
-    // Generate a Hald 12 identity PNG to a temp file.
-    const Glib::ustring tmpPath = rtengine::HaldCLUT::createIdentityTempFile(12);
+    // Generate the appropriate identity image to a temp file.
+    Glib::ustring tmpPath;
+    if (isCube) {
+        const int cubeSize = std::stoi(cubeSizeCombo->get_active_text());
+        tmpPath = rtengine::CubeLUT::createIdentityTempFile(cubeSize);
+    } else {
+        const int haldLevel = std::stoi(haldLevelCombo->get_active_text());
+        tmpPath = rtengine::HaldCLUT::createIdentityTempFile(haldLevel);
+    }
+
     if (tmpPath.empty()) {
         Gtk::MessageDialog msgd(*toplevel,
-            "<b>Could not generate Hald identity image.</b>",
+            "<b>" + M("MAIN_BUTTON_SAVE_LUT_ERR_IDENTITY") + "</b>",
             true, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
         msgd.run();
         return;
@@ -3095,7 +3174,7 @@ void EditorPanel::saveLUTPressed ()
     ipc->getParams(&pparams);
     const ProcParams lutParams = makeLUTProcParams(pparams, toneCurveCb->get_active());
 
-    // Process the identity image asynchronously; route progress to this panel.
+    // Process the identity image asynchronously.
     rtengine::ProcessingJob* job =
         rtengine::ProcessingJob::create(tmpPath, false, lutParams);
 
@@ -3125,17 +3204,42 @@ bool EditorPanel::idle_saveLUTImage (ProgressConnector<rtengine::IImagefloat*>* 
         setProgressStr(M("GENERAL_SAVE"));
         setProgress(0.9f);
 
-        ProgressConnector<int>* ld = new ProgressConnector<int>();
-        img->setSaveProgressListener(parent->getProgressListener());
-        ld->startFunc(
-            sigc::bind(sigc::mem_fun(img, &rtengine::IImagefloat::saveAsPNG),
-                       destPath, 8),
-            sigc::bind(sigc::mem_fun(*this, &EditorPanel::idle_saveLUTSaved),
-                       ld, img, destPath));
+        const bool isCube =
+            rtengine::getFileExtension(destPath).lowercase() == "cube";
+
+        if (isCube) {
+            // The identity image has height = cube size (see CubeLUT::createIdentityTempFile).
+            const int cubeSize = img->getHeight();
+            const bool ok = rtengine::CubeLUT::saveAsCubeFile(img, cubeSize, destPath);
+            delete img;
+
+            if (!ok) {
+                auto* toplevel = static_cast<Gtk::Window*>(get_toplevel());
+                const Glib::ustring msg =
+                    Glib::ustring("<b>") + M("MAIN_MSG_CANNOTSAVE") + ": "
+                    + escapeHtmlChars(destPath) + "</b>";
+                Gtk::MessageDialog msgd(*toplevel, msg, true,
+                    Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+                msgd.run();
+            }
+
+            parent->setProgressStr("");
+            parent->setProgress(0.);
+            setProgressState(false);
+            saveLUTBtn->set_sensitive(true);
+        } else {
+            ProgressConnector<int>* ld = new ProgressConnector<int>();
+            img->setSaveProgressListener(parent->getProgressListener());
+            ld->startFunc(
+                sigc::bind(sigc::mem_fun(img, &rtengine::IImagefloat::saveAsPNG),
+                           destPath, 8),
+                sigc::bind(sigc::mem_fun(*this, &EditorPanel::idle_saveLUTSaved),
+                           ld, img, destPath));
+        }
     } else {
         auto* toplevel = static_cast<Gtk::Window*>(get_toplevel());
         Gtk::MessageDialog msgd(*toplevel,
-            "<b>Error processing Hald identity image.</b>",
+            "<b>" + M("MAIN_BUTTON_SAVE_LUT_ERR_PROCESS") + "</b>",
             true, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
         msgd.run();
         setProgressState(false);

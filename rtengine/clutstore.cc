@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -426,6 +427,70 @@ bool rtengine::CubeLUT::load(const Glib::ustring& filename)
     flevel_minus_two = static_cast<float>(clut_level - 2);
 
     return true;
+}
+
+Glib::ustring rtengine::CubeLUT::createIdentityTempFile(int size)
+{
+    if (size < 2) {
+        return {};
+    }
+
+    // Layout: width = size*size, height = size.
+    // Pixel (y=b, x=g*size+r) encodes input colour (r/(size-1), g/(size-1), b/(size-1)).
+    const float den = static_cast<float>(size - 1);
+    Imagefloat img(size * size, size);
+
+    for (int b = 0; b < size; ++b) {
+        for (int g = 0; g < size; ++g) {
+            for (int r = 0; r < size; ++r) {
+                const int x = g * size + r;
+                img.r(b, x) = r * 65535.f / den;
+                img.g(b, x) = g * 65535.f / den;
+                img.b(b, x) = b * 65535.f / den;
+            }
+        }
+    }
+
+    const Glib::ustring tmpPath =
+        Glib::build_filename(Glib::get_tmp_dir(), "rt_cube_identity.png");
+
+    if (img.saveAsPNG(tmpPath, 16) != 0) {
+        return {};
+    }
+
+    return tmpPath;
+}
+
+bool rtengine::CubeLUT::saveAsCubeFile(const IImagefloat* img, int size,
+                                        const Glib::ustring& destPath)
+{
+    std::ofstream file(destPath.c_str());
+    if (!file.is_open()) {
+        return false;
+    }
+
+    file << "TITLE \"RawTherapee Export\"\n\n";
+    file << "LUT_3D_SIZE " << size << "\n\n";
+    file << "DOMAIN_MIN 0.0 0.0 0.0\n";
+    file << "DOMAIN_MAX 1.0 1.0 1.0\n\n";
+    file << std::fixed << std::setprecision(6);
+
+    // .cube order: R fastest, then G, then B.
+    // Our image layout: pixel (y=b, x=g*size+r) → entry for input (r, g, b).
+    const float scale = 1.f / 65535.f;
+    for (int b = 0; b < size; ++b) {
+        for (int g = 0; g < size; ++g) {
+            for (int r = 0; r < size; ++r) {
+                const int x = g * size + r;
+                const float rv = std::max(0.f, std::min(1.f, img->r(b, x) * scale));
+                const float gv = std::max(0.f, std::min(1.f, img->g(b, x) * scale));
+                const float bv = std::max(0.f, std::min(1.f, img->b(b, x) * scale));
+                file << rv << ' ' << gv << ' ' << bv << '\n';
+            }
+        }
+    }
+
+    return file.good();
 }
 
 // ===========================================================================
