@@ -28,6 +28,7 @@
 #include "thumbnaillistener.h"
 #include "windows/saveasdlg.h"
 
+#include "rtengine/clutstore.h"
 #include "rtengine/noncopyable.h"
 #include "rtengine/rtengine.h"
 
@@ -214,7 +215,7 @@ private:
     BatchQueueEntry*    createBatchQueueEntry ();
     bool                idle_imageSaved (ProgressConnector<int> *pc, rtengine::IImagefloat* img, Glib::ustring fname, SaveFormat sf, rtengine::procparams::ProcParams &pparams);
     bool                idle_saveImage (ProgressConnector<rtengine::IImagefloat*> *pc, Glib::ustring fname, SaveFormat sf, rtengine::procparams::ProcParams &pparams);
-    bool                idle_saveLUTImage (ProgressConnector<rtengine::IImagefloat*> *pc, Glib::ustring destPath, Glib::ustring tmpPath);
+    bool                idle_saveLUTImage (ProgressConnector<rtengine::IImagefloat*> *pc, Glib::ustring destPath, Glib::ustring tmpPath, rtengine::CubeLUTSmoothParams smooth);
     bool                idle_saveLUTSaved (ProgressConnector<int> *pc, rtengine::IImagefloat* img, Glib::ustring destPath);
     bool                idle_sendToGimp ( ProgressConnector<rtengine::IImagefloat*> *pc, Glib::ustring fname);
     bool                idle_sentToGimp (ProgressConnector<int> *pc, rtengine::IImagefloat* img, Glib::ustring filename);

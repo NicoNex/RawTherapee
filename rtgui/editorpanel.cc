@@ -3102,10 +3102,74 @@ void EditorPanel::saveLUTPressed ()
     cubeSizeCombo->append("65");
     cubeSizeCombo->set_active(1); // default: 33
 
+    // ── Smoothing frame (cube-only) ──────────────────────────────────────────
+    // Radius (sigma): how many neighbouring nodes are blended.
+    // Amount (%):     how strongly the smoothed result replaces the original.
+    //
+    // Both default to a light but effective setting so the user gets a
+    // reasonable starting point; setting either to 0 disables smoothing.
+
+    Gtk::Label* cubeRadiusLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_SIGMA") + ":"));
+    setExpandAlignProperties(cubeRadiusLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    cubeRadiusLabel->set_tooltip_markup(M("MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_SIGMA_TOOLTIP"));
+
+    Gtk::Scale* cubeRadiusScale = Gtk::manage(
+        new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    cubeRadiusScale->set_range(0.0, 3.0);
+    cubeRadiusScale->set_increments(0.1, 0.5);
+    cubeRadiusScale->set_value(1.0);
+    cubeRadiusScale->set_digits(1);
+    cubeRadiusScale->set_draw_value(true);
+    cubeRadiusScale->set_value_pos(Gtk::POS_RIGHT);
+    setExpandAlignProperties(cubeRadiusScale, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    Gtk::Label* cubeAmountLabel = Gtk::manage(
+        new Gtk::Label(M("MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_STRENGTH") + ":"));
+    setExpandAlignProperties(cubeAmountLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    cubeAmountLabel->set_tooltip_markup(M("MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_STRENGTH_TOOLTIP"));
+
+    Gtk::Scale* cubeAmountScale = Gtk::manage(
+        new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    cubeAmountScale->set_range(0, 100);
+    cubeAmountScale->set_increments(5, 10);
+    cubeAmountScale->set_value(35);
+    cubeAmountScale->set_digits(0);
+    cubeAmountScale->set_draw_value(true);
+    cubeAmountScale->set_value_pos(Gtk::POS_RIGHT);
+    setExpandAlignProperties(cubeAmountScale, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    Gtk::Grid* smoothGrid = Gtk::manage(new Gtk::Grid());
+    smoothGrid->set_column_spacing(5);
+    smoothGrid->set_row_spacing(4);
+    smoothGrid->set_margin_top(4);
+    smoothGrid->set_margin_bottom(2);
+    smoothGrid->set_margin_start(4);
+    smoothGrid->set_margin_end(4);
+    smoothGrid->attach(*cubeRadiusLabel,  0, 0, 1, 1);
+    smoothGrid->attach(*cubeRadiusScale,  1, 0, 1, 1);
+    smoothGrid->attach(*cubeAmountLabel,  0, 1, 1, 1);
+    smoothGrid->attach(*cubeAmountScale,  1, 1, 1, 1);
+
+    Gtk::CheckButton* smoothEnable = Gtk::manage(
+        new Gtk::CheckButton(M("MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH")));
+    smoothEnable->set_active(true);
+
+    Gtk::Frame* smoothFrame = Gtk::manage(new Gtk::Frame());
+    smoothFrame->set_label_widget(*smoothEnable);
+    smoothFrame->set_shadow_type(Gtk::SHADOW_ETCHED_IN);
+    smoothFrame->add(*smoothGrid);
+
+    smoothEnable->signal_toggled().connect([smoothEnable, smoothGrid]() {
+        smoothGrid->set_sensitive(smoothEnable->get_active());
+    });
+
     Gtk::Grid* cubeOpts = Gtk::manage(new Gtk::Grid());
     cubeOpts->set_column_spacing(5);
+    cubeOpts->set_row_spacing(6);
     cubeOpts->attach(*cubeSizeLabel, 0, 0, 1, 1);
     cubeOpts->attach(*cubeSizeCombo, 1, 0, 1, 1);
+    cubeOpts->attach(*smoothFrame,   0, 1, 2, 1);
     formatGrid->attach(*cubeOpts, 0, 2, 2, 1);
 
     // ── Format-change handler — show/hide like SaveFormatPanel::formatChanged()
@@ -3179,10 +3243,16 @@ void EditorPanel::saveLUTPressed ()
         }
     }
 
-    // Generate the appropriate identity image to a temp file.
+    // Collect format-specific parameters before the dialog is destroyed.
+    rtengine::CubeLUTSmoothParams smooth;
     Glib::ustring tmpPath;
+
     if (isCube) {
         const int cubeSize = std::stoi(cubeSizeCombo->get_active_text());
+        if (smoothEnable->get_active()) {
+            smooth.sigma    = static_cast<float>(cubeRadiusScale->get_value());
+            smooth.strength = static_cast<float>(cubeAmountScale->get_value()) / 100.f;
+        }
         tmpPath = rtengine::CubeLUT::createIdentityTempFile(cubeSize);
     } else {
         const int haldLevel = std::stoi(haldLevelCombo->get_active_text());
@@ -3212,13 +3282,14 @@ void EditorPanel::saveLUTPressed ()
         sigc::bind(sigc::ptr_fun(&rtengine::processImage),
                    job, err, static_cast<rtengine::ProgressListener*>(this), false),
         sigc::bind(sigc::mem_fun(*this, &EditorPanel::idle_saveLUTImage),
-                   ld, destPath, tmpPath));
+                   ld, destPath, tmpPath, smooth));
 
     saveLUTBtn->set_sensitive(false);
 }
 
 bool EditorPanel::idle_saveLUTImage (ProgressConnector<rtengine::IImagefloat*>* pc,
-                                      Glib::ustring destPath, Glib::ustring tmpPath)
+                                      Glib::ustring destPath, Glib::ustring tmpPath,
+                                      rtengine::CubeLUTSmoothParams smooth)
 {
     rtengine::IImagefloat* img = pc->returnValue();
     delete pc;
@@ -3238,7 +3309,7 @@ bool EditorPanel::idle_saveLUTImage (ProgressConnector<rtengine::IImagefloat*>* 
         if (isCube) {
             // The identity image has height = cube size (see CubeLUT::createIdentityTempFile).
             const int cubeSize = img->getHeight();
-            const bool ok = rtengine::CubeLUT::saveAsCubeFile(img, cubeSize, destPath);
+            const bool ok = rtengine::CubeLUT::saveAsCubeFile(img, cubeSize, destPath, smooth);
             delete img;
 
             if (!ok) {

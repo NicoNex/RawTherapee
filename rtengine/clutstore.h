@@ -77,6 +77,22 @@ public:
 };
 
 /**
+ * Parameters for the adaptive Gaussian smoothing applied when exporting a
+ * .cube LUT.  Both fields default to zero (= smoothing disabled).
+ *
+ * sigma    — spatial kernel sigma in LUT-node units (e.g. 1.0 ≈ 1-node radius).
+ *            Larger values blur over a wider neighbourhood.
+ * strength — overall blend factor in [0, 1].  At 0 the output is identical
+ *            to the unsmoothed LUT; at 1 the maximum adaptive smoothing is
+ *            applied.  Nodes with high local gradients are automatically
+ *            blended less (edge-preserving behaviour).
+ */
+struct CubeLUTSmoothParams {
+    float sigma    = 0.f;
+    float strength = 0.f;
+};
+
+/**
  * Cube LUT — loads text-based .cube files (Adobe / DaVinci Resolve format).
  * Supports LUT_3D_SIZE, DOMAIN_MIN / DOMAIN_MAX and comment lines.
  * The colour profile defaults to sRGB; like HaldCLUT, a suffix in the
@@ -95,8 +111,11 @@ public:
 
     // Write a .cube text file from a processed identity image created by
     // createIdentityTempFile().  The same size must be passed to both calls.
+    // If smooth.strength > 0 and smooth.sigma > 0, adaptive Gaussian smoothing
+    // is applied to the cube data before writing.
     static bool saveAsCubeFile(const IImagefloat* img, int size,
-                               const Glib::ustring& destPath);
+                               const Glib::ustring& destPath,
+                               const CubeLUTSmoothParams& smooth = {});
 };
 
 class CLUTStore final :

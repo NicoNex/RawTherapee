@@ -1880,6 +1880,11 @@ MAIN_BUTTON_NAVSYNC_TOOLTIP;Synchronize the File Browser or Filmstrip with the E
 MAIN_BUTTON_PREFERENCES;Preferences
 MAIN_BUTTON_PUTTOQUEUE_TOOLTIP;Put current image to processing queue.\nShortcut: <b>Ctrl+b</b>
 MAIN_BUTTON_SAVE_LUT_CUBE_SIZE;Cube size
+MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH;Smoothing
+MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_SIGMA;Radius
+MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_SIGMA_TOOLTIP;How far the smoothing extends to neighbouring nodes.\n0 = disabled; 1 = blend with immediate neighbours; 2 = two nodes away.\nHigher values reduce banding more but can soften colour transitions.
+MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_STRENGTH;Amount (%)
+MAIN_BUTTON_SAVE_LUT_CUBE_SMOOTH_STRENGTH_TOOLTIP;How strongly the smoothed result replaces the original LUT.\nAt 0% no smoothing is applied. Areas with smooth colour gradients\nare blended more than sharp colour transitions (adaptive behaviour).
 MAIN_BUTTON_SAVE_LUT_DIALOG_TITLE;Export LUT
 MAIN_BUTTON_SAVE_LUT_ERR_IDENTITY;Could not generate LUT identity image.
 MAIN_BUTTON_SAVE_LUT_ERR_PROCESS;Error processing LUT identity image.

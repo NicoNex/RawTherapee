@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -124,6 +125,148 @@ bool loadHaldFile(
     }
 
     return res;
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Gaussian smoothing for .cube LUT export
+// ---------------------------------------------------------------------------
+
+// Apply an adaptive bilateral-style Gaussian to a 3D LUT cube stored as a
+// flat array in .cube order (R fastest, B slowest):
+//   data[b * N*N + g * N + r]  →  RGB triple in [0, 1].
+//
+// Algorithm:
+//   1. Compute a per-node gradient magnitude via central finite differences
+//      on the 3×3 Jacobian (9 partial derivatives: 3 output channels × 3
+//      input axes).  Normalise to [0, 1].
+//   2. For each node build a weighted average over a cubic neighbourhood of
+//      radius ceil(2·sigma):
+//        w = w_spatial · w_range · w_adaptive
+//      where:
+//        w_spatial  = exp(-‖Δnode‖² / 2σ²)          — Gaussian distance
+//        w_range    = exp(-‖Δvalue‖² / 2σ_r²)        — bilateral colour similarity
+//        w_adaptive = 1 / (1 + 4·grad_norm[neighbour]) — down-weight edges
+//   3. Blend: output = original + blend·(smooth − original),
+//      where blend = strength · (1 − grad_norm[node]) so that high-gradient
+//      nodes are blended less (edge preservation).
+//
+// sigma        — spatial kernel sigma in LUT-node units.
+// strength     — global blend in [0, 1].
+void smoothCube3D(std::vector<std::array<float, 3>>& cube, int N,
+                  float sigma, float strength)
+{
+    if (N < 2 || sigma <= 0.f || strength <= 0.f) {
+        return;
+    }
+
+    const int N2    = N * N;
+    const int total = N * N * N;
+
+    auto idx = [N, N2](int r, int g, int b) -> int {
+        return b * N2 + g * N + r;
+    };
+    auto clp = [N](int v) -> int {
+        return v < 0 ? 0 : (v >= N ? N - 1 : v);
+    };
+
+    // ── 1. Gradient magnitudes ────────────────────────────────────────────────
+    std::vector<float> grad(total, 0.f);
+    float grad_max = 0.f;
+
+    for (int b = 0; b < N; ++b) {
+        for (int g = 0; g < N; ++g) {
+            for (int r = 0; r < N; ++r) {
+                float sum = 0.f;
+
+                // Three input axes: R (axis 0), G (axis 1), B (axis 2)
+                const int steps[3][3] = { {1,0,0}, {0,1,0}, {0,0,1} };
+                for (int a = 0; a < 3; ++a) {
+                    const int* s = steps[a];
+                    const auto& lo = cube[idx(clp(r-s[0]), clp(g-s[1]), clp(b-s[2]))];
+                    const auto& hi = cube[idx(clp(r+s[0]), clp(g+s[1]), clp(b+s[2]))];
+
+                    // At boundaries the effective step is 1 instead of 2
+                    const bool onBound =
+                        (a == 0 && (r == 0 || r == N-1)) ||
+                        (a == 1 && (g == 0 || g == N-1)) ||
+                        (a == 2 && (b == 0 || b == N-1));
+                    const float denom = onBound ? 1.f : 2.f;
+
+                    for (int c = 0; c < 3; ++c) {
+                        const float d = (hi[c] - lo[c]) / denom;
+                        sum += d * d;
+                    }
+                }
+
+                const float gm = std::sqrt(sum);
+                grad[idx(r, g, b)] = gm;
+                if (gm > grad_max) { grad_max = gm; }
+            }
+        }
+    }
+
+    if (grad_max > 0.f) {
+        for (float& gv : grad) { gv /= grad_max; }
+    }
+
+    // ── 2. Precompute kernel parameters ──────────────────────────────────────
+    const int   radius          = static_cast<int>(std::ceil(2.f * sigma));
+    const float inv_2sigma2     = 1.f / (2.f * sigma * sigma);
+    // Range sigma: 0.15 in [0,1] colour space — governs bilateral selectivity
+    const float inv_2sigmaR2    = 1.f / (2.f * 0.15f * 0.15f);
+
+    // ── 3. Adaptive bilateral Gaussian smoothing ──────────────────────────────
+    std::vector<std::array<float, 3>> output(cube);
+
+    for (int b0 = 0; b0 < N; ++b0) {
+        for (int g0 = 0; g0 < N; ++g0) {
+            for (int r0 = 0; r0 < N; ++r0) {
+                const int   ci     = idx(r0, g0, b0);
+                const auto& center = cube[ci];
+                const float cgrad  = grad[ci];
+
+                std::array<float, 3> wsum  = {0.f, 0.f, 0.f};
+                float                wtot  = 0.f;
+
+                for (int db = -radius; db <= radius; ++db) {
+                    for (int dg = -radius; dg <= radius; ++dg) {
+                        for (int dr = -radius; dr <= radius; ++dr) {
+                            const int ni = idx(clp(r0+dr), clp(g0+dg), clp(b0+db));
+                            const auto& nb = cube[ni];
+
+                            // Spatial Gaussian
+                            const float dist2 = float(dr*dr + dg*dg + db*db);
+                            float w = std::exp(-dist2 * inv_2sigma2);
+
+                            // Bilateral: colour-space similarity
+                            float cdiff2 = 0.f;
+                            for (int c = 0; c < 3; ++c) {
+                                const float d = nb[c] - center[c];
+                                cdiff2 += d * d;
+                            }
+                            w *= std::exp(-cdiff2 * inv_2sigmaR2);
+
+                            // Adaptive: down-weight high-gradient neighbours
+                            w *= 1.f / (1.f + 4.f * grad[ni]);
+
+                            for (int c = 0; c < 3; ++c) { wsum[c] += w * nb[c]; }
+                            wtot += w;
+                        }
+                    }
+                }
+
+                // Blend: less smoothing where local gradient is high
+                const float blend = strength * (1.f - cgrad);
+                const float iblend = 1.f - blend;
+
+                for (int c = 0; c < 3; ++c) {
+                    output[ci][c] = center[c] * iblend + (wsum[c] / wtot) * blend;
+                }
+            }
+        }
+    }
+
+    cube = std::move(output);
 }
 
 } // anonymous namespace
@@ -462,8 +605,32 @@ Glib::ustring rtengine::CubeLUT::createIdentityTempFile(int size)
 }
 
 bool rtengine::CubeLUT::saveAsCubeFile(const IImagefloat* img, int size,
-                                        const Glib::ustring& destPath)
+                                        const Glib::ustring& destPath,
+                                        const CubeLUTSmoothParams& smooth)
 {
+    // ── Extract cube to a flat float array in [0, 1] ─────────────────────────
+    // Layout matches .cube order: index = b*N² + g*N + r  (R fastest).
+    // Image layout: pixel (y=b, x=g*size+r).
+    const float scale = 1.f / 65535.f;
+    const int total   = size * size * size;
+
+    std::vector<std::array<float, 3>> cube(total);
+    for (int b = 0; b < size; ++b) {
+        for (int g = 0; g < size; ++g) {
+            for (int r = 0; r < size; ++r) {
+                const int x   = g * size + r;
+                const int idx = b * size * size + g * size + r;
+                cube[idx][0] = std::max(0.f, std::min(1.f, img->r(b, x) * scale));
+                cube[idx][1] = std::max(0.f, std::min(1.f, img->g(b, x) * scale));
+                cube[idx][2] = std::max(0.f, std::min(1.f, img->b(b, x) * scale));
+            }
+        }
+    }
+
+    // ── Optional adaptive Gaussian smoothing ─────────────────────────────────
+    smoothCube3D(cube, size, smooth.sigma, smooth.strength);
+
+    // ── Write .cube file ──────────────────────────────────────────────────────
     std::ofstream file(destPath.c_str());
     if (!file.is_open()) {
         return false;
@@ -475,19 +642,8 @@ bool rtengine::CubeLUT::saveAsCubeFile(const IImagefloat* img, int size,
     file << "DOMAIN_MAX 1.0 1.0 1.0\n\n";
     file << std::fixed << std::setprecision(6);
 
-    // .cube order: R fastest, then G, then B.
-    // Our image layout: pixel (y=b, x=g*size+r) → entry for input (r, g, b).
-    const float scale = 1.f / 65535.f;
-    for (int b = 0; b < size; ++b) {
-        for (int g = 0; g < size; ++g) {
-            for (int r = 0; r < size; ++r) {
-                const int x = g * size + r;
-                const float rv = std::max(0.f, std::min(1.f, img->r(b, x) * scale));
-                const float gv = std::max(0.f, std::min(1.f, img->g(b, x) * scale));
-                const float bv = std::max(0.f, std::min(1.f, img->b(b, x) * scale));
-                file << rv << ' ' << gv << ' ' << bv << '\n';
-            }
-        }
+    for (int idx = 0; idx < total; ++idx) {
+        file << cube[idx][0] << ' ' << cube[idx][1] << ' ' << cube[idx][2] << '\n';
     }
 
     return file.good();
