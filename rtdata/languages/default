@@ -1886,8 +1886,7 @@ MAIN_BUTTON_SAVE_LUT_ERR_PROCESS;Error processing LUT identity image.
 MAIN_BUTTON_SAVE_LUT_FORMAT_CUBE;Cube LUT (.cube)
 MAIN_BUTTON_SAVE_LUT_FORMAT_HALD;Hald CLUT (.png)
 MAIN_BUTTON_SAVE_LUT_HALD_LEVEL;Hald level
-MAIN_BUTTON_SAVE_LUT_INCLUDE_TONECURVE;Include tone curve
-MAIN_BUTTON_SAVE_LUT_TOOLTIP;Export a LUT (Hald CLUT PNG or .cube).\nApplies colorimetric adjustments (white balance, curves, color grading)\nto an identity image and saves the result.
+MAIN_BUTTON_SAVE_LUT_TOOLTIP;Export a LUT (Hald CLUT PNG or .cube).\nBakes the current profile's colorimetric adjustments into an identity image.\n\nIncludes: Lab curves, RGB curves, HSV equalizer, vibrance, color toning,\ncolor appearance, shadows/highlights, tone equalizer, gamut compression,\ndehaze, soft-light, film simulation, channel mixer, black &amp; white,\noutput color management.
 MAIN_BUTTON_SAVE_TOOLTIP;Save current image.\nShortcut: <b>Ctrl+s</b>\nSave current profile (.pp3).\nShortcut: <b>Ctrl+Shift+s</b>
 MAIN_BUTTON_SENDTOEDITOR;Edit image in external editor
 MAIN_BUTTON_SENDTOEDITOR_TOOLTIP;Edit current image in external editor.\nShortcut: <b>Ctrl+e</b>\nCurrent editor:

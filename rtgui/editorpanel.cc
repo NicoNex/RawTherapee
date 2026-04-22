@@ -711,28 +711,26 @@ namespace
 //
 // The generated LUT operates on display-referred (already tone-curved) values,
 // matching how RT applies its own film simulation CLUTs: gamma sRGB is applied
-// before the CLUT lookup, inverse gamma after.  This means the tone curve must
-// NOT be included — it is applied by the camera (or host application) before
-// the LUT, and including it here would double the effect.
+// before the CLUT lookup, inverse gamma after.  The tone curve is always reset
+// to neutral: it runs earlier in RT's pipeline, so including it here would
+// apply it twice and produce incorrect results.
 //
 // Kept: Lab curves, RGB curves, HSV equalizer, vibrance, colour toning,
 //       colour appearance, shadows/highlights, tone equalizer, gamut
 //       compression, dehaze, soft-light, film simulation, channel mixer,
 //       black & white, output colour management.
-// Reset to neutral: tone curve, exposure, white balance.
+// Reset to neutral: tone curve.
 // Disabled: sharpening, noise reduction, edge-preserving / Retinex tone
 //           mapping, local contrast, all geometric transforms, lens/CA/vignette
 //           corrections, gradient, spot removal, locallab, wavelet, dir-pyr,
 //           resize, framing, film negative.
-ProcParams makeLUTProcParams(const ProcParams& src, bool includeToneCurve)
+ProcParams makeLUTProcParams(const ProcParams& src)
 {
     ProcParams p = src;
 
-    // Tone curve and exposure — applied before the CLUT in RT's pipeline.
-    // Reset to neutral unless the user explicitly wants to bake it into the LUT.
-    if (!includeToneCurve) {
-        p.toneCurve = ToneCurveParams{};
-    }
+    // Tone curve — applied before the CLUT in RT's pipeline; including it
+    // here would double the effect and break the LUT.
+    p.toneCurve = ToneCurveParams{};
 
     // Sharpening (spatial)
     p.sharpening.enabled   = false;
@@ -3047,7 +3045,7 @@ void EditorPanel::saveLUTPressed ()
         dialog.response(Gtk::RESPONSE_OK);
     });
 
-    // ── Bottom-left: LUT format panel (mirrors SaveFormatPanel structure) ──────
+    // ── Bottom: LUT format panel (mirrors SaveFormatPanel structure) ───────────
     //
     // Row 0: "Format:" label + combo (always visible)
     // Row 1: Hald level options       (shown only when Hald CLUT selected)
@@ -3110,23 +3108,6 @@ void EditorPanel::saveLUTPressed ()
     cubeOpts->attach(*cubeSizeCombo, 1, 0, 1, 1);
     formatGrid->attach(*cubeOpts, 0, 2, 2, 1);
 
-    // ── Bottom-right: general options ────────────────────────────────────────
-    Gtk::CheckButton* toneCurveCb = Gtk::manage(
-        new Gtk::CheckButton(M("MAIN_BUTTON_SAVE_LUT_INCLUDE_TONECURVE")));
-    toneCurveCb->set_active(false);
-
-    Gtk::Box* vbox_right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
-    vbox_right->pack_start(*toneCurveCb, Gtk::PACK_SHRINK);
-
-    // ── Assemble bottom bar (mirrors SaveAsDialog layout) ────────────────────
-    Gtk::Box* hbox_bottom = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
-    hbox_bottom->pack_start(*formatGrid,
-        Gtk::PACK_EXPAND_WIDGET, 2);
-    hbox_bottom->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)),
-        Gtk::PACK_SHRINK, 2);
-    hbox_bottom->pack_start(*vbox_right,
-        Gtk::PACK_EXPAND_WIDGET, 2);
-
     // ── Format-change handler — show/hide like SaveFormatPanel::formatChanged()
     auto onFormatChanged = [&]() {
         const bool isCube = formatCombo->get_active_row_number() == 1;
@@ -3155,7 +3136,7 @@ void EditorPanel::saveLUTPressed ()
     cancel->signal_clicked().connect([&dialog]() { dialog.response(Gtk::RESPONSE_CANCEL); });
 
     dialog.get_content_area()->pack_start(*fchooser,    Gtk::PACK_EXPAND_WIDGET);
-    dialog.get_content_area()->pack_start(*hbox_bottom, Gtk::PACK_SHRINK, 2);
+    dialog.get_content_area()->pack_start(*formatGrid,  Gtk::PACK_SHRINK, 2);
     dialog.get_action_area()->pack_end(*ok,     Gtk::PACK_SHRINK, 4);
     dialog.get_action_area()->pack_end(*cancel, Gtk::PACK_SHRINK, 4);
     dialog.show_all_children();
@@ -3216,10 +3197,10 @@ void EditorPanel::saveLUTPressed ()
         return;
     }
 
-    // Build the processing parameters, optionally including the tone curve.
+    // Build the processing parameters for the LUT (tone curve always excluded).
     ProcParams pparams;
     ipc->getParams(&pparams);
-    const ProcParams lutParams = makeLUTProcParams(pparams, toneCurveCb->get_active());
+    const ProcParams lutParams = makeLUTProcParams(pparams);
 
     // Process the identity image asynchronously.
     rtengine::ProcessingJob* job =
